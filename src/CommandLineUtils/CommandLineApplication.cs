@@ -3,7 +3,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.ComponentModel.DataAnnotations;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -57,7 +56,7 @@ namespace McMaster.Extensions.CommandLineUtils
         private readonly ConventionContext _conventionContext;
         private readonly List<IConvention> _conventions = new();
         private readonly List<CommandArgument> _arguments = new();
-        private readonly List<CommandOption> _options = new();
+        private readonly List<IOption> _options = new();
         private readonly List<CommandLineApplication> _subcommands = new();
         internal readonly List<string> _remainingArguments = new();
 
@@ -184,9 +183,9 @@ namespace McMaster.Extensions.CommandLineUtils
         public string? ExtendedHelpText { get; set; }
 
         /// <summary>
-        /// Available command-line options on this command. Use <see cref="GetOptions"/> to get all available options, which may include inherited options.
+        /// Available command-line options on this command. Use <see cref="GetAnyOptions"/> to get all available options, which may include inherited options.
         /// </summary>
-        public IReadOnlyCollection<CommandOption> Options => _options;
+        public IReadOnlyCollection<IOption> Options => _options;
 
         /// <summary>
         /// Whether a Pager should be used to display help text.
@@ -401,10 +400,10 @@ namespace McMaster.Extensions.CommandLineUtils
         public TextWriter Error { get; set; }
 
         /// <summary>
-        /// Gets all command line options available to this command, including any inherited options.
+        /// Gets all command line options available to this command, including any inherited options and <see cref="MappedOption{T}"/>s.
         /// </summary>
         /// <returns>Command line options.</returns>
-        public IEnumerable<CommandOption> GetOptions()
+        public IEnumerable<IOption> GetAnyOptions()
         {
             var expr = Options.AsEnumerable();
             var rootNode = this;
@@ -415,6 +414,15 @@ namespace McMaster.Extensions.CommandLineUtils
             }
 
             return expr;
+        }
+
+        /// <summary>
+        /// Gets all command line options available to this command, including any inherited options.
+        /// </summary>
+        /// <returns>Command line options.</returns>
+        public IEnumerable<IParseableOption> GetOptions()
+        {
+            return GetAnyOptions().OfType<IParseableOption>();
         }
 
         /// <summary>
@@ -573,6 +581,11 @@ namespace McMaster.Extensions.CommandLineUtils
         /// <param name="option"></param>
         public void AddOption(CommandOption option)
         {
+            AddOption((IOption)option);
+        }
+
+        internal void AddOption(IOption option)
+        {
             _options.Add(option);
         }
 
@@ -603,6 +616,24 @@ namespace McMaster.Extensions.CommandLineUtils
             AddOption(option);
             configuration(option);
             return option;
+        }
+
+        /// <summary>
+        /// Add a new set of mapped options
+        /// </summary>
+        /// <param name="optionType"></param>
+        /// <param name="configuration"></param>
+        /// <param name="inherited"></param>
+        /// <typeparam name="T">The type of the values on the option</typeparam>
+        /// <returns>The option</returns>
+        public MappedOption<T> MappedOption<T>(CommandOptionType optionType, Action<MappedOption<T>> configuration, bool inherited)
+        {
+            var mappedOption = new MappedOption<T>(this, optionType)
+            {
+                Inherited = inherited
+            };
+            configuration(mappedOption);
+            return mappedOption;
         }
 
 #pragma warning disable RS0026 // Do not add multiple public overloads with optional parameters
@@ -1181,9 +1212,17 @@ namespace McMaster.Extensions.CommandLineUtils
 
                 // prefer this type before AdditionalServices because it is common for service containers to automatically
                 // create IEnumerable<T> to allow registration of multiple services
-                if (serviceType == typeof(IEnumerable<CommandOption>))
+                if (serviceType == typeof(IEnumerable<IOption>))
+                {
+                    return _parent.GetAnyOptions();
+                }
+                if (serviceType == typeof(IEnumerable<IParseableOption>))
                 {
                     return _parent.GetOptions();
+                }
+                if (serviceType == typeof(IEnumerable<CommandOption>))
+                {
+                    return _parent.GetAnyOptions().OfType<CommandOption>();
                 }
 
                 if (serviceType == typeof(IEnumerable<CommandArgument>))

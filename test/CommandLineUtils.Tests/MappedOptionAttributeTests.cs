@@ -6,24 +6,26 @@ using System.Linq;
 using System.Reflection;
 using System.Reflection.Emit;
 using FluentAssertions;
+using FluentAssertions.Execution;
+using McMaster.Extensions.CommandLineUtils.Attributes;
 using McMaster.Extensions.CommandLineUtils.Conventions;
 using Xunit;
 using Xunit.Abstractions;
 
 namespace McMaster.Extensions.CommandLineUtils.Tests
 {
-    public class OptionAttributeTests : ConventionTestBase
+    public class MappedOptionAttributeTests : ConventionTestBase
     {
-        public OptionAttributeTests(ITestOutputHelper output) : base(output)
-        { }
+        public MappedOptionAttributeTests(ITestOutputHelper output) : base(output)
+        {
+        }
 
         protected CommandLineApplication<T> Create<T>() where T : class
-            => Create<T, OptionAttributeConvention>();
+            => Create<T, MappedOptionAttributeConvention>();
 
         private class AppWithUnknownOptionType
         {
-            [Option]
-            public OptionAttributeTests? Option { get; }
+            [MappedOption("--blubb", "blubb")] public MappedOptionAttributeTests? Option { get; }
         }
 
         [Fact]
@@ -38,51 +40,57 @@ namespace McMaster.Extensions.CommandLineUtils.Tests
 
         private class ShortNameOverride
         {
-            [Option(ShortName = "d1")]
-            public string? Detail1 { get; }
+            [MappedOption(nameof(Detail1), ShortName = "d1")]
+            public string? Detail1 { get; set; }
 
-            [Option(ShortName = "d2")]
-            public string? Detail2 { get; }
+            [MappedOption(nameof(Detail2), ShortName = "d2")]
+            public string? Detail2 { get; set; }
         }
 
         [Fact]
         public void CanOverrideShortNameOnOption()
         {
             var app = Create<ShortNameOverride>();
-            var d1 = Assert.Single(app.Options.OfType<IParseableOption>(), o => o.ShortName == "d1");
-            Assert.Equal("d1", d1.ShortName);
-            Assert.Equal("detail1", d1.LongName);
-            Assert.Equal("DETAIL1", d1.ValueName);
-            var d2 = Assert.Single(app.Options.OfType<IParseableOption>(), o => o.ShortName == "d2");
-            Assert.Equal("d2", d2.ShortName);
-            Assert.Equal("detail2", d2.LongName);
-            Assert.Equal("DETAIL2", d2.ValueName);
+
+            using var assertionScope = new AssertionScope();
+
+            var d1 = app.GetOptions()
+                .Should().ContainSingle(o => o.ShortName == "d1").Subject;
+            d1.ShortName.Should().Be("d1");
+            d1.LongName.Should().Be("detail1");
+            d1.ValueName.Should().BeNull();
+
+            var d2 = app.GetOptions()
+                .Should().ContainSingle(o => o.ShortName == "d2").Subject;
+            d2.ShortName.Should().Be("d2");
+            d2.LongName.Should().Be("detail2");
+            d2.ValueName.Should().BeNull();
         }
 
         private class EmptyShortName
         {
-            [Option(ShortName = "")]
-            public string? Detail1 { get; }
+            [MappedOption(nameof(Detail1), ShortName = "")]
+            public string? Detail1 { get; set; }
 
-            [Option(ShortName = "")]
-            public string? Detail2 { get; }
+            [MappedOption(nameof(Detail2), ShortName = "")]
+            public string? Detail2 { get; set; }
         }
 
         [Fact]
         public void CanSetShortNameToEmptyString()
         {
             var app = Create<EmptyShortName>();
-            app.Options.Should().HaveCount(2)
-                .And.OnlyContain(o => string.IsNullOrEmpty(((IParseableOption)o).ShortName));
+
+            app.GetOptions().Should().HaveCount(2)
+                .And.OnlyContain(o => string.IsNullOrEmpty(o.ShortName));
         }
 
+        /*
         private class AmbiguousShortOptionName
         {
-            [Option]
-            public int Message { get; }
+            [MappedOption(nameof(Message))] public string Message { get; set; }
 
-            [Option]
-            public int Mode { get; }
+            [MappedOption(nameof(Mode))] public string Mode { get; set; }
         }
 
         [Fact]
@@ -97,14 +105,14 @@ namespace McMaster.Extensions.CommandLineUtils.Tests
                     typeof(AmbiguousShortOptionName).GetProperty("Message")),
                 ex.Message);
         }
+        */
 
+        /*
         private class AmbiguousLongOptionName
         {
-            [Option("--no-edit")]
-            public int ManuallySetToNoEdit { get; }
+            [Option("--no-edit")] public int ManuallySetToNoEdit { get; }
 
-            [Option]
-            public int NoEdit { get; }
+            [Option] public int NoEdit { get; }
         }
 
         [Fact]
@@ -119,10 +127,11 @@ namespace McMaster.Extensions.CommandLineUtils.Tests
                     typeof(AmbiguousLongOptionName).GetProperty("ManuallySetToNoEdit")),
                 ex.Message);
         }
+        */
 
         private class BothOptionAndArgument
         {
-            [Option]
+            [MappedOption(nameof(NotPossible))]
             [Argument(0)]
             public int NotPossible { get; }
         }
@@ -130,58 +139,59 @@ namespace McMaster.Extensions.CommandLineUtils.Tests
         [Fact]
         public void ThrowsWhenOptionAndArgumentAreSpecified()
         {
-            var ex = Assert.Throws<InvalidOperationException>(
-                () => Create<BothOptionAndArgument>());
-
-            Assert.Equal(
-                Strings.BothOptionAndArgumentAttributesCannotBeSpecified(
-                    typeof(BothOptionAndArgument).GetProperty("NotPossible")),
-                ex.Message);
+            FluentActions.Invoking(() => Create<BothOptionAndArgument>())
+                .Should().Throw<InvalidOperationException>()
+                .And
+                .Message.Should().Be(Strings.BothOptionAndArgumentAttributesCannotBeSpecified(
+                    typeof(BothOptionAndArgument).GetProperty("NotPossible")));
         }
 
 
         private class OptionHasDefaultValues
         {
-            [Option("-a1")]
-            public string Arg1 { get; } = "a";
+            [MappedOption("-a1", "z")] public string Arg1 { get; } = "a";
 
-            [Option("-a2")]
-            public string[] Arg2 { get; } = new[] { "b", "c" };
+            [MappedOption("-a2", new[] { "y" })] public string[] Arg2 { get; } = new[] { "b", "c" };
 
-            [Option("-a3")]
-            public bool? Arg3 { get; }
-
-            [Option("-a4")]
-            public (bool hasValue, string value) Arg4 { get; } = (false, "Yellow");
+            [MappedOption("-a3", true)] public bool? Arg3 { get; }
         }
 
         [Fact]
         public void KeepsDefaultValues()
         {
-            var app1 = Create<OptionHasDefaultValues>();
-            app1.Parse("-a1", "z", "-a2", "y");
-            Assert.Equal("z", app1.Model.Arg1);
-            Assert.Equal(new[] { "y" }, app1.Model.Arg2);
+            using var assertionScope = new AssertionScope();
 
-            var app2 = Create<OptionHasDefaultValues>();
-            app2.Parse("-a1", "z");
-            Assert.Equal("z", app2.Model.Arg1);
-            Assert.Equal(new[] { "b", "c" }, app2.Model.Arg2);
+            {
+                var app1 = Create<OptionHasDefaultValues>();
+                app1.Parse("-a1", "-a2");
+                app1.Model.Arg1.Should().Be("z");
+                app1.Model.Arg2.Should().BeEquivalentTo("y");
+                app1.Model.Arg3.Should().NotHaveValue();
+            }
 
-            var app3 = Create<OptionHasDefaultValues>();
-            app3.Parse();
-            Assert.Equal("a", app3.Model.Arg1);
-            Assert.Equal(new[] { "b", "c" }, app3.Model.Arg2);
-            Assert.False(app3.Model.Arg3.HasValue, "Should not have value");
-            Assert.False(app3.Model.Arg4.hasValue, "Should not have value");
-            Assert.Equal((false, "Yellow"), app3.Model.Arg4);
+            {
+                var app2 = Create<OptionHasDefaultValues>();
+                app2.Parse("-a1");
+                app2.Model.Arg1.Should().Be("z");
+                app2.Model.Arg2.Should().BeEquivalentTo("b", "c");
+                app2.Model.Arg3.Should().NotHaveValue();
+            }
 
-            var app4 = Create<OptionHasDefaultValues>();
-            app4.Parse("-a3", "-a4");
-            Assert.True(app4.Model.Arg3.HasValue);
-            Assert.True(app4.Model.Arg4.hasValue);
-            Assert.True(app4.Model.Arg3);
-            Assert.Equal((true, null), app4.Model.Arg4);
+            {
+                var app3 = Create<OptionHasDefaultValues>();
+                app3.Parse();
+                app3.Model.Arg1.Should().Be("a");
+                app3.Model.Arg2.Should().BeEquivalentTo("b", "c");
+                app3.Model.Arg3.Should().NotHaveValue();
+            }
+
+            {
+                var app4 = Create<OptionHasDefaultValues>();
+                app4.Parse("-a3");
+                app4.Model.Arg1.Should().Be("a");
+                app4.Model.Arg2.Should().BeEquivalentTo("b", "c");
+                app4.Model.Arg3.Should().BeTrue();
+            }
         }
 
         private class PrivateSetterProgram
@@ -189,11 +199,9 @@ namespace McMaster.Extensions.CommandLineUtils.Tests
             public int _value;
             public static int _staticvalue;
 
-            [Option]
-            public int Number { get; private set; }
+            [Option] public int Number { get; private set; }
 
-            [Option]
-            public int Count { get; }
+            [Option] public int Count { get; }
 
             [Option]
             public int Value
@@ -202,11 +210,9 @@ namespace McMaster.Extensions.CommandLineUtils.Tests
                 set => _value = value + 1;
             }
 
-            [Option("--static-number")]
-            public static int StaticNumber { get; private set; }
+            [Option("--static-number")] public static int StaticNumber { get; private set; }
 
-            [Option("--static-string")]
-            public static string? StaticString { get; }
+            [Option("--static-string")] public static string? StaticString { get; }
 
             [Option("--static-value")]
             public static int StaticValue
@@ -264,8 +270,7 @@ namespace McMaster.Extensions.CommandLineUtils.Tests
 
         abstract class PrivateBaseType
         {
-            [Option]
-            int Count { get; }
+            [Option] int Count { get; }
 
             public int GetCount() => Count;
         }
@@ -293,7 +298,8 @@ namespace McMaster.Extensions.CommandLineUtils.Tests
         [InlineData("___field", "f", "field", "FIELD")]
         [InlineData("m_field", "m", "m-field", "M_FIELD")]
         [InlineData("m_Field", "m", "m-field", "M_FIELD")]
-        public void ItDeterminesShortAndLongOptionNames(string propName, string shortName, string longName, string valueName)
+        public void ItDeterminesShortAndLongOptionNames(string propName, string shortName, string longName,
+            string valueName)
         {
             var option = CreateOption(typeof(int), propName);
             Assert.Equal(longName, option.LongName);
